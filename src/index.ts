@@ -12,7 +12,8 @@ async function main() {
   await initDb();
   if (useSheets) {
     const city = getDefaultCity();
-    await validateSheetsSchemaOrThrow(city);
+    try { await validateSheetsSchemaOrThrow(city); }
+    catch (e) { logger.warn("Sheets schema validation warning", { error: String(e) }); }
   }
   await startHttpServer();
   await startBot();

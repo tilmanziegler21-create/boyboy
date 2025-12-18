@@ -12,14 +12,18 @@ function hasColumns(headers: string[], required: string[]) {
 }
 
 async function getHeadersWithFallback(sheet: string): Promise<string[]> {
-  try {
-    const vr = await batchGet([`${sheet}!A:Z`]);
-    return (vr[0]?.values?.[0] || []).map(String);
-  } catch {
-    const up = sheet.replace(/^[a-z]/, (c) => c.toUpperCase());
-    const vr2 = await batchGet([`${up}!A:Z`]);
-    return (vr2[0]?.values?.[0] || []).map(String);
+  const city = (env.CITY_CODES || "").split(",")[0]?.trim() || "";
+  const candidates = [sheet, sheet.replace(/^[a-z]/, (c) => c.toUpperCase())];
+  if (city) {
+    candidates.unshift(`${sheet}_${city}`, `${sheet.replace(/^[a-z]/, (c) => c.toUpperCase())}_${city}`);
   }
+  for (const s of candidates) {
+    try {
+      const vr = await batchGet([`${s}!A:Z`]);
+      return (vr[0]?.values?.[0] || []).map(String);
+    } catch {}
+  }
+  return [];
 }
 
 export async function validateSheetsSchemaOrThrow(defaultCity: string) {

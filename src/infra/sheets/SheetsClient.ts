@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import { env } from "../config";
+import { getDefaultCity } from "../backend";
 import { logger } from "../logger";
 import { Courier, Order, Product, User } from "../../core/types";
 
@@ -35,17 +36,37 @@ function headerIndex(headers: string[], name: string) {
   return headers.indexOf(name);
 }
 
+function headerIndexAny(headers: string[], names: string[]) {
+  for (const n of names) {
+    const i = headers.indexOf(n);
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
 async function readSheet(sheet: string): Promise<{ headers: string[]; rows: string[][] }> {
   const api = sheetsApi();
-  const range = `${sheet}!A:Z`;
-  const resp = await api.spreadsheets.values.get({
-    spreadsheetId: env.GOOGLE_SHEETS_SPREADSHEET_ID,
-    range
-  });
-  const values = resp.data.values || [];
-  const headers = (values[0] || []).map((s) => String(s));
-  const rows = values.slice(1).map((r) => r.map((s) => String(s)));
-  return { headers, rows };
+  const candidates: string[] = [];
+  const city = getDefaultCity();
+  const cap = sheet.replace(/^[a-z]/, (c) => c.toUpperCase());
+  if (env.GOOGLE_SHEETS_MODE === "TABS_PER_CITY") {
+    candidates.push(`${sheet}_${city}`, `${cap}_${city}`);
+  }
+  candidates.push(sheet, cap);
+  let lastErr: any = null;
+  for (const s of candidates) {
+    try {
+      const range = `${s}!A:Z`;
+      const resp = await api.spreadsheets.values.get({ spreadsheetId: env.GOOGLE_SHEETS_SPREADSHEET_ID, range });
+      const values = resp.data.values || [];
+      const headers = (values[0] || []).map((x) => String(x));
+      const rows = values.slice(1).map((r) => r.map((x) => String(x)));
+      return { headers, rows };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error(`Unable to read sheet ${sheet}`);
 }
 
 async function writeCell(sheet: string, rowNumber: number, colNumber: number, value: string) {
@@ -70,15 +91,15 @@ function columnLetter(n: number) {
 }
 
 export async function getProducts(): Promise<Product[]> {
-  const { headers, rows } = await readSheet("Products");
-  const idIdx = headerIndex(headers, "product_id");
-  const titleIdx = headerIndex(headers, "title");
-  const priceIdx = headerIndex(headers, "price");
-  const categoryIdx = headerIndex(headers, "category");
-  const qtyIdx = headerIndex(headers, "qty_available");
-  const upsellIdx = headerIndex(headers, "upsell_group_id");
-  const remIdx = headerIndex(headers, "reminder_offset_days");
-  const activeIdx = headerIndex(headers, "active");
+  const { headers, rows } = await readSheet("products");
+  const idIdx = headerIndexAny(headers, ["product_id", "sku", "id"]);
+  const titleIdx = headerIndexAny(headers, ["title", "name"]);
+  const priceIdx = headerIndexAny(headers, ["price"]);
+  const categoryIdx = headerIndexAny(headers, ["category"]);
+  const qtyIdx = headerIndexAny(headers, ["qty_available", "stock", "qty"]);
+  const upsellIdx = headerIndexAny(headers, ["upsell_group_id", "upsell"]);
+  const remIdx = headerIndexAny(headers, ["reminder_offset_days", "reminder_days"]);
+  const activeIdx = headerIndexAny(headers, ["active", "is_active"]);
   return rows
     .filter((r) => r.length > 0)
     .map((r) => ({
@@ -94,7 +115,7 @@ export async function getProducts(): Promise<Product[]> {
 }
 
 export async function updateProductQty(product_id: number, new_qty: number): Promise<void> {
-  const { headers, rows } = await readSheet("Products");
+  const { headers, rows } = await readSheet("products");
   const idIdx = headerIndex(headers, "product_id");
   const qtyIdx = headerIndex(headers, "qty_available");
   let rowNumber = -1;
@@ -109,7 +130,7 @@ export async function updateProductQty(product_id: number, new_qty: number): Pro
 }
 
 export async function updateProductPrice(product_id: number, new_price: number): Promise<void> {
-  const { headers, rows } = await readSheet("Products");
+  const { headers, rows } = await readSheet("products");
   const idIdx = headerIndex(headers, "product_id");
   const priceIdx = headerIndex(headers, "price");
   let rowNumber = -1;
@@ -124,7 +145,7 @@ export async function updateProductPrice(product_id: number, new_price: number):
 }
 
 export async function getCouriers(): Promise<Courier[]> {
-  const { headers, rows } = await readSheet("Couriers");
+  const { headers, rows } = await readSheet("couriers");
   const idIdx = headerIndex(headers, "courier_id");
   const nameIdx = headerIndex(headers, "name");
   const tgIdx = headerIndex(headers, "tg_id");
@@ -140,7 +161,7 @@ export async function getCouriers(): Promise<Courier[]> {
 }
 
 export async function updateCourier(courier_id: number, fields: Partial<Courier>): Promise<void> {
-  const { headers, rows } = await readSheet("Couriers");
+  const { headers, rows } = await readSheet("couriers");
   const idIdx = headerIndex(headers, "courier_id");
   let rowNumber = -1;
   for (let i = 0; i < rows.length; i++) {
@@ -159,7 +180,7 @@ export async function updateCourier(courier_id: number, fields: Partial<Courier>
 }
 
 export async function getUsers(): Promise<User[]> {
-  const { headers, rows } = await readSheet("Users");
+  const { headers, rows } = await readSheet("users");
   const idIdx = headerIndex(headers, "user_id");
   const usernameIdx = headerIndex(headers, "username");
   const firstIdx = headerIndex(headers, "first_seen");
@@ -196,7 +217,7 @@ export async function addUser(user: User): Promise<void> {
 }
 
 export async function updateUser(user_id: number, fields: Partial<User>): Promise<void> {
-  const { headers, rows } = await readSheet("Users");
+  const { headers, rows } = await readSheet("users");
   const idIdx = headerIndex(headers, "user_id");
   let rowNumber = -1;
   for (let i = 0; i < rows.length; i++) {

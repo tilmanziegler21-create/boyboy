@@ -38,12 +38,12 @@ export class GoogleSheetsBackend implements DataBackend {
     const now = Date.now();
     if (cached && now - cached.ts < env.SHEETS_CACHE_TTL_SECONDS * 1000) return cached.data;
     const s = sheetName("products", city);
-    let vr = await batchGet([`${s}!A:Z`]);
-    let values = vr[0]?.values || [];
-    if (!values.length) {
-      const up = s.replace(/^[a-z]/, (c) => c.toUpperCase());
-      vr = await batchGet([`${up}!A:Z`]);
+    const candidates = [s, s.replace(/^[a-z]/, (c) => c.toUpperCase()), city, city.toUpperCase()];
+    let values: any[] = [];
+    for (const tab of candidates) {
+      const vr = await batchGet([`${tab}!A:Z`]);
       values = vr[0]?.values || [];
+      if (values.length) break;
     }
     const headers = values[0] || [];
     const rows = values.slice(1);
@@ -62,10 +62,10 @@ export class GoogleSheetsBackend implements DataBackend {
         price: Number(r[priceIdx] || 0),
         category: String(r[catIdx] || "liquids") as any,
         brand: brandIdx >= 0 ? (r[brandIdx] || null) : null,
-        qty_available: Number(r[stockIdx] || 0),
+        qty_available: stockIdx >= 0 ? Number(r[stockIdx] || 0) : 999,
         upsell_group_id: null,
         reminder_offset_days: 7,
-        active: (activeIdx >= 0 ? parseBool(r[activeIdx]) : true) && (Number(r[stockIdx] || 0) > 0)
+        active: activeIdx >= 0 ? parseBool(r[activeIdx]) : true
       }));
     this.cacheProducts.set(city, { ts: now, data: out });
     return out;
@@ -76,10 +76,12 @@ export class GoogleSheetsBackend implements DataBackend {
     const now = Date.now();
     if (cached && now - cached.ts < env.SHEETS_CACHE_TTL_SECONDS * 1000) return cached.data;
     const s = sheetName("couriers", city);
-    let values = (await batchGet([`${s}!A:Z`]))[0]?.values || [];
-    if (!values.length) {
-      const up = s.replace(/^[a-z]/, (c) => c.toUpperCase());
-      values = (await batchGet([`${up}!A:Z`]))[0]?.values || [];
+    const candidates = [s, s.replace(/^[a-z]/, (c) => c.toUpperCase()), city, city.toUpperCase()];
+    let values: any[] = [];
+    for (const tab of candidates) {
+      const vr = (await batchGet([`${tab}!A:Z`]))[0];
+      values = vr?.values || [];
+      if (values.length) break;
     }
     const headers = values[0] || [];
     const rows = values.slice(1);

@@ -226,7 +226,7 @@ export function registerClientFlow(bot: TelegramBot) {
       const list = products.filter((p) => p.active && p.category === "electronics" && (p.brand || "") === brand);
       const start = page * per;
       const slice = list.slice(start, start + per);
-      const rows: { text: string; callback_data: string }[][] = slice.map((a) => [{ text: `� ${a.title} · ${fmtMoney(a.price)}`, callback_data: encodeCb(`add_item:${a.product_id}`) }]);
+      const rows: { text: string; callback_data: string }[][] = slice.map((a) => [{ text: `💨 ${a.title} · ${fmtMoney(a.price)}`, callback_data: encodeCb(`add_item:${a.product_id}`) }]);
       const nav: { text: string; callback_data: string }[] = [];
       if (page > 0) nav.push({ text: "◀️", callback_data: encodeCb(`elec_brand:${brand}:page:${page - 1}`) });
       if (start + per < list.length) nav.push({ text: "▶️", callback_data: encodeCb(`elec_brand:${brand}:page:${page + 1}`) });
@@ -299,10 +299,13 @@ export function registerClientFlow(bot: TelegramBot) {
       let liquCountNow = 0; for (const it of items) { const ip = products.find((x) => x.product_id === it.product_id); if (ip && ip.category === "liquids") liquCountNow += it.qty; }
       const currentUnit = liquCountNow === 1 ? "18.00 €" : (liquCountNow === 2 ? "16.00 €" : "15.00 €");
       const nextUnit = liquCountNow >= 2 ? "15.00 €" : "16.00 €";
+      const textLiquids = `💧 ${p.title} добавлен\n${liquCountNow} шт — ${currentUnit}\n\n🔥 Следующий вкус — ${nextUnit}\n🔥 От 3 шт — по 15 € за каждую\n\nИтого: <b>${totals.total_with_discount.toFixed(2)} €</b>${savings > 0 ? ` · Экономия: ${savings.toFixed(2)} €` : ""}`;
+      const textElectronics = `💨 ${p.title} добавлен — ${fmtMoney(p.price)}\n${renderCart(items, products)}\n\nИтого: <b>${totals.total_with_discount.toFixed(2)} €</b>`;
+      const outText = p.category === "liquids" ? textLiquids : textElectronics;
       try {
-        await bot.editMessageText(`💧 ${p.title} добавлен\n${liquCountNow} шт — ${currentUnit}\n\n🔥 Следующий вкус — ${nextUnit}\n🔥 От 3 шт — по 15 € за каждую\n\nИтого: <b>${totals.total_with_discount.toFixed(2)} €</b>${savings > 0 ? ` · Экономия: ${savings.toFixed(2)} €` : ""}`, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: finalKeyboard }, parse_mode: "HTML" });
+        await bot.editMessageText(outText, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: finalKeyboard }, parse_mode: "HTML" });
       } catch {
-        await bot.sendMessage(chatId, `💧 ${p.title} добавлен\n${liquCountNow} шт — ${currentUnit}\n\n🔥 Следующий вкус — ${nextUnit}\n🔥 От 3 шт — по 15 € за каждую\n\nИтого: <b>${totals.total_with_discount.toFixed(2)} €</b>${savings > 0 ? ` · Экономия: ${savings.toFixed(2)} €` : ""}`, { reply_markup: { inline_keyboard: finalKeyboard }, parse_mode: "HTML" });
+        await bot.sendMessage(chatId, outText, { reply_markup: { inline_keyboard: finalKeyboard }, parse_mode: "HTML" });
       }
     } else if (data === "show_upsell") {
       const products = await refreshProductsCache();
