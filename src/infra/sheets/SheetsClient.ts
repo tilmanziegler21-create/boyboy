@@ -145,22 +145,30 @@ export async function getProducts(): Promise<Product[]> {
   const idIdx = headerIndexAny(headers, ["product_id", "sku", "id"]);
   const titleIdx = headerIndexAny(headers, ["title", "name"]);
   const priceIdx = headerIndexAny(headers, ["price"]);
-  const categoryIdx = headerIndexAny(headers, ["category"]);
+  const categoryIdx = headerIndexAny(headers, ["category", "категория", "type"]);
+  const brandIdx = headerIndexAny(headers, ["brand", "бренд", "vendor", "producer", "марка"]);
   const qtyIdx = headerIndexAny(headers, ["qty_available", "stock", "qty"]);
   const upsellIdx = headerIndexAny(headers, ["upsell_group_id", "upsell"]);
   const remIdx = headerIndexAny(headers, ["reminder_offset_days", "reminder_days"]);
-  const activeIdx = headerIndexAny(headers, ["active", "is_active"]);
+  const activeIdx = headerIndexAny(headers, ["active", "is_active", "активен", "enabled"]);
+  const normCat = (s: string): Product["category"] => {
+    const x = String(s || "").trim().toLowerCase();
+    if (["liquid", "liquids", "жидкость", "жидкости", "juice"].includes(x)) return "liquids";
+    if (["electronic", "electronics", "электроника", "device", "devices", "электронка"].includes(x)) return "electronics";
+    return (x === "liquids" || x === "electronics") ? (x as Product["category"]) : "liquids";
+  };
   return rows
     .filter((r) => r.length > 0)
-    .map((r) => ({
-      product_id: Number(r[idIdx]),
+    .map((r, i) => ({
+      product_id: idIdx >= 0 ? Number(r[idIdx]) : i + 1,
       title: r[titleIdx],
       price: Number(r[priceIdx]),
-      category: r[categoryIdx] as Product["category"],
-      qty_available: Number(r[qtyIdx]),
+      category: categoryIdx >= 0 ? normCat(r[categoryIdx]) : "liquids",
+      brand: brandIdx >= 0 ? (r[brandIdx] || null) : null,
+      qty_available: qtyIdx >= 0 ? Number(r[qtyIdx] || 0) : 0,
       upsell_group_id: r[upsellIdx] ? Number(r[upsellIdx]) : null,
       reminder_offset_days: Number(r[remIdx] || 0),
-      active: String(r[activeIdx]).toLowerCase() === "true"
+      active: activeIdx >= 0 ? ["true", "1", "да", "yes"].includes(String(r[activeIdx]).trim().toLowerCase()) : true
     }));
 }
 
