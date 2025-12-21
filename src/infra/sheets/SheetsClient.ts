@@ -157,10 +157,17 @@ export async function getProducts(): Promise<Product[]> {
     if (["electronic", "electronics", "электроника", "device", "devices", "электронка"].includes(x)) return "electronics";
     return (x === "liquids" || x === "electronics") ? (x as Product["category"]) : "liquids";
   };
+  const parseId = (v: any, i: number) => {
+    const s = String(v ?? "").trim();
+    const n = Number(s);
+    if (Number.isFinite(n)) return n;
+    const m = s.match(/\d+/);
+    return m ? Number(m[0]) : i + 1;
+  };
   return rows
     .filter((r) => r.length > 0)
     .map((r, i) => ({
-      product_id: idIdx >= 0 ? Number(r[idIdx]) : i + 1,
+      product_id: idIdx >= 0 ? parseId(r[idIdx], i) : i + 1,
       title: r[titleIdx],
       price: Number(r[priceIdx]),
       category: categoryIdx >= 0 ? normCat(r[categoryIdx]) : "liquids",
