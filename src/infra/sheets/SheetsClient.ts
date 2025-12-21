@@ -53,7 +53,13 @@ function authClient() {
   const email = env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const key = env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
   if (email && key) {
-    const cleanKey = key.replace(/\\n/g, "\n");
+    const cleanKey = String(key)
+      .replace(/\r\n/g, "\n")
+      .replace(/\\r\\n/g, "\n")
+      .replace(/\\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .trim()
+      .replace(/^"+|"+$/g, "");
     logger.info("Using JWT auth from env email/private key");
     return new google.auth.JWT({ email, key: cleanKey, scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
   }
