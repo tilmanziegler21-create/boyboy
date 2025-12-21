@@ -13,13 +13,28 @@ type Range = {
 function authClient() {
   const keyFile = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_PATH;
   if (keyFile) {
-    if (fs.existsSync(keyFile)) {
-      logger.info("Using GoogleAuth with keyFile", { keyFile });
-      return new google.auth.GoogleAuth({ keyFile, scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
+    if (!fs.existsSync(keyFile)) {
+      const err = `Secret file not found at ${keyFile}`;
+      logger.error("Sheets auth error", { error: err });
+      throw new Error(err);
     }
-    const err = `Secret file not found at ${keyFile}`;
-    logger.error("Sheets auth error", { error: err });
-    throw new Error(err);
+    try {
+      const raw = fs.readFileSync(keyFile, "utf8");
+      const json = JSON.parse(raw);
+      const email = String(json.client_email || "");
+      const key = String(json.private_key || "").replace(/\\n/g, "\n");
+      if (!email || !key) {
+        const err = "Invalid service account JSON: missing client_email/private_key";
+        logger.error("Sheets auth error", { error: err });
+        throw new Error(err);
+      }
+      logger.info("Using JWT auth from keyFile", { keyFile });
+      return new google.auth.JWT({ email, key, scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
+    } catch (e) {
+      const err = `Failed to parse service account JSON: ${String(e)}`;
+      logger.error("Sheets auth error", { error: err });
+      throw new Error(err);
+    }
   }
   const email = env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const key = env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
