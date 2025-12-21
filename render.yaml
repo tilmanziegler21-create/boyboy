@@ -12,8 +12,6 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 16
-      - key: NODE_OPTIONS
-        value: --openssl-legacy-provider
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: DATA_BACKEND
