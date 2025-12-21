@@ -119,6 +119,27 @@ async function readSheet(sheet: string): Promise<{ headers: string[]; rows: stri
   throw lastErr || new Error(`Unable to read sheet ${sheet}`);
 }
 
+function sheetCandidates(base: string): string[] {
+  const city = getDefaultCity();
+  const cap = base.replace(/^[a-z]/, (c) => c.toUpperCase());
+  const list: string[] = [];
+  if (env.GOOGLE_SHEETS_MODE === "TABS_PER_CITY") list.push(`${base}_${city}`, `${cap}_${city}`);
+  list.push(base, cap);
+  return list;
+}
+
+async function resolveWriteSheet(base: string): Promise<string> {
+  const api = sheetsApi();
+  const candidates = sheetCandidates(base);
+  for (const s of candidates) {
+    try {
+      await api.spreadsheets.values.get({ spreadsheetId: env.GOOGLE_SHEETS_SPREADSHEET_ID, range: `${s}!A1:A1` });
+      return s;
+    } catch {}
+  }
+  return base;
+}
+
 async function writeCell(sheet: string, rowNumber: number, colNumber: number, value: string) {
   const api = sheetsApi();
   const range = `${sheet}!${columnLetter(colNumber + 1)}${rowNumber + 1}`;
@@ -180,33 +201,37 @@ export async function getProducts(): Promise<Product[]> {
 }
 
 export async function updateProductQty(product_id: number, new_qty: number): Promise<void> {
+  const writeSheet = await resolveWriteSheet("products");
   const { headers, rows } = await readSheet("products");
-  const idIdx = headerIndex(headers, "product_id");
-  const qtyIdx = headerIndex(headers, "qty_available");
+  const idIdx = headerIndexAny(headers, ["product_id", "sku", "id"]);
+  const qtyIdx = headerIndexAny(headers, ["qty_available", "stock", "qty"]);
   let rowNumber = -1;
   for (let i = 0; i < rows.length; i++) {
-    if (Number(rows[i][idIdx]) === product_id) {
-      rowNumber = i + 1;
-      break;
-    }
+    const raw = idIdx >= 0 ? rows[i][idIdx] : String(i + 1);
+    const n = Number(raw);
+    const id = Number.isFinite(n) ? n : (String(raw).match(/\d+/)?.[0] ? Number(String(raw).match(/\d+/)![0]) : -1);
+    if (id === product_id) { rowNumber = i + 1; break; }
   }
   if (rowNumber < 0) throw new Error("Product not found");
-  await writeCell("Products", rowNumber, qtyIdx, String(new_qty));
+  if (qtyIdx < 0) throw new Error("Quantity column not found");
+  await writeCell(writeSheet, rowNumber, qtyIdx, String(new_qty));
 }
 
 export async function updateProductPrice(product_id: number, new_price: number): Promise<void> {
+  const writeSheet = await resolveWriteSheet("products");
   const { headers, rows } = await readSheet("products");
-  const idIdx = headerIndex(headers, "product_id");
-  const priceIdx = headerIndex(headers, "price");
+  const idIdx = headerIndexAny(headers, ["product_id", "sku", "id"]);
+  const priceIdx = headerIndexAny(headers, ["price", "цена"]);
   let rowNumber = -1;
   for (let i = 0; i < rows.length; i++) {
-    if (Number(rows[i][idIdx]) === product_id) {
-      rowNumber = i + 1;
-      break;
-    }
+    const raw = idIdx >= 0 ? rows[i][idIdx] : String(i + 1);
+    const n = Number(raw);
+    const id = Number.isFinite(n) ? n : (String(raw).match(/\d+/)?.[0] ? Number(String(raw).match(/\d+/)![0]) : -1);
+    if (id === product_id) { rowNumber = i + 1; break; }
   }
   if (rowNumber < 0) throw new Error("Product not found");
-  await writeCell("Products", rowNumber, priceIdx, String(new_price));
+  if (priceIdx < 0) throw new Error("Price column not found");
+  await writeCell(writeSheet, rowNumber, priceIdx, String(new_price));
 }
 
 export async function getCouriers(): Promise<Courier[]> {

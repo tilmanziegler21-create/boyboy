@@ -76,9 +76,7 @@ export async function finalDeduction(items: OrderItem[]): Promise<void> {
     if (!p) throw new Error("Product not found");
     const newQty = p.qty_available - it.qty;
     if (newQty < 0) throw new Error("Negative stock");
-    if (!useSheets) {
-      await updateProductQty(it.product_id, newQty);
-    }
+    await updateProductQty(it.product_id, newQty);
   }
 }
 
