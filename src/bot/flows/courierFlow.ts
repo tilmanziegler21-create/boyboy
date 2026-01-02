@@ -3,18 +3,15 @@ import { getDb } from "../../infra/db/sqlite";
 import { setDelivered, getOrderById } from "../../domain/orders/OrderService";
 import { getProducts } from "../../infra/data";
 import { encodeCb, decodeCb } from "../cb";
+import { logger } from "../../infra/logger";
 
 export function registerCourierFlow(bot: TelegramBot) {
   bot.onText(/\/courier/, async (msg) => {
     const chatId = msg.chat.id;
-    const list = getDb()
-      .prepare("SELECT o.order_id, o.user_id, o.delivery_interval, o.delivery_exact_time, u.username FROM orders o LEFT JOIN users u ON o.user_id=u.user_id WHERE o.status IN ('pending','courier_assigned') ORDER BY o.order_id DESC LIMIT 10")
-      .all() as any[];
-    const lines = list.map((o) => `#${o.order_id} ${o.username ? "@" + o.username : "Клиент"} · ${o.delivery_exact_time || "?"}`);
-    const myList = list.filter((o) => {
-      const row = getDb().prepare("SELECT courier_id FROM orders WHERE order_id = ?").get(o.order_id) as any;
-      return row?.courier_id === msg.from?.id;
-    });
+    const myList = getDb()
+      .prepare("SELECT o.order_id, o.user_id, o.delivery_interval, o.delivery_exact_time, u.username FROM orders o LEFT JOIN users u ON o.user_id=u.user_id WHERE o.status IN ('pending','courier_assigned') AND o.courier_id = ? ORDER BY o.order_id DESC LIMIT 100")
+      .all(msg.from?.id) as any[];
+    const lines = myList.map((o) => `#${o.order_id} ${o.username ? "@" + o.username : "Клиент"} · ${o.delivery_exact_time || "?"}`);
     const keyboard = myList.map((o) => [
       { text: `Выдача ${o.order_id}`, callback_data: encodeCb(`courier_issue:${o.order_id}`) },
       { text: `Не выдано ${o.order_id}`, callback_data: encodeCb(`courier_not_issued:${o.order_id}`) }
@@ -25,13 +22,13 @@ export function registerCourierFlow(bot: TelegramBot) {
       { text: "16-18", callback_data: "set_interval:16-18" },
       { text: "18-20", callback_data: "set_interval:18-20" }
     ]);
+    keyboard.push([{ text: "🏠 Главное меню", callback_data: encodeCb("back:main") }]);
     await bot.sendMessage(chatId, lines.join("\n") || "Нет заказов", { reply_markup: { inline_keyboard: keyboard } });
   });
 
   bot.on("callback_query", async (q) => {
     try { await bot.answerCallbackQuery(q.id); } catch {}
-    console.log('DELIVER BUTTON CLICKED', q.data);
-    console.log('CTX FROM', q.from?.id);
+    try { logger.info("COURIER_CLICK", { data: q.data, courier_id: q.from?.id }); } catch {}
     let data = q.data || "";
     data = decodeCb(data);
     if (data === "__expired__") {
@@ -48,6 +45,24 @@ export function registerCourierFlow(bot: TelegramBot) {
       } catch {
         try { await bot.editMessageText(`Заказ #${id} выдан`, { chat_id: chatId, message_id: q.message?.message_id as number }); } catch {}
       }
+      try {
+        const myList = getDb()
+          .prepare("SELECT o.order_id, o.user_id, o.delivery_interval, o.delivery_exact_time, u.username FROM orders o LEFT JOIN users u ON o.user_id=u.user_id WHERE o.status IN ('pending','courier_assigned') AND o.courier_id = ? ORDER BY o.order_id DESC LIMIT 100")
+          .all(q.from.id) as any[];
+        const lines2 = myList.map((o) => `#${o.order_id} ${o.username ? "@" + o.username : "Клиент"} · ${o.delivery_exact_time || "?"}`);
+        const keyboard2 = myList.map((o) => [
+          { text: `Выдача ${o.order_id}`, callback_data: encodeCb(`courier_issue:${o.order_id}`) },
+          { text: `Не выдано ${o.order_id}`, callback_data: encodeCb(`courier_not_issued:${o.order_id}`) }
+        ]);
+        keyboard2.push([
+          { text: "Интервал 12-14", callback_data: "set_interval:12-14" },
+          { text: "14-16", callback_data: "set_interval:14-16" },
+          { text: "16-18", callback_data: "set_interval:16-18" },
+          { text: "18-20", callback_data: "set_interval:18-20" }
+        ]);
+        keyboard2.push([{ text: "🏠 Главное меню", callback_data: encodeCb("back:main") }]);
+        await bot.sendMessage(chatId, lines2.join("\n") || "Нет заказов", { reply_markup: { inline_keyboard: keyboard2 } });
+      } catch {}
       const order = await getOrderById(id);
       console.log('ORDER FROM DB', order);
       if (order) {
@@ -79,7 +94,22 @@ export function registerCourierFlow(bot: TelegramBot) {
         if (order) {
           try { await bot.sendMessage(order.user_id, "❗ Заказ пока не выдан. Слот освобождён — выберите новое время в ближайшее." ); } catch {}
         }
-        await bot.sendMessage(chatId, `Слот освобождён для заказа #${id}`);
+        const myList = getDb()
+          .prepare("SELECT o.order_id, o.user_id, o.delivery_interval, o.delivery_exact_time, u.username FROM orders o LEFT JOIN users u ON o.user_id=u.user_id WHERE o.status IN ('pending','courier_assigned') AND o.courier_id = ? ORDER BY o.order_id DESC LIMIT 100")
+          .all(q.from.id) as any[];
+        const lines2 = myList.map((o) => `#${o.order_id} ${o.username ? "@" + o.username : "Клиент"} · ${o.delivery_exact_time || "?"}`);
+        const keyboard2 = myList.map((o) => [
+          { text: `Выдача ${o.order_id}`, callback_data: encodeCb(`courier_issue:${o.order_id}`) },
+          { text: `Не выдано ${o.order_id}`, callback_data: encodeCb(`courier_not_issued:${o.order_id}`) }
+        ]);
+        keyboard2.push([
+          { text: "Интервал 12-14", callback_data: "set_interval:12-14" },
+          { text: "14-16", callback_data: "set_interval:14-16" },
+          { text: "16-18", callback_data: "set_interval:16-18" },
+          { text: "18-20", callback_data: "set_interval:18-20" }
+        ]);
+        keyboard2.push([{ text: "🏠 Главное меню", callback_data: encodeCb("back:main") }]);
+        await bot.sendMessage(chatId, lines2.join("\n") || "Нет заказов", { reply_markup: { inline_keyboard: keyboard2 } });
       } catch {}
     } else if (data.startsWith("set_interval:")) {
       const interval = data.split(":")[1];

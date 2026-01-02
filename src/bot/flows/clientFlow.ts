@@ -8,6 +8,8 @@ import { getActiveCouriers } from "../../domain/couriers/CourierService";
 import { generateTimeSlots, validateSlot, getOccupiedSlots, isSlotAvailable } from "../../domain/delivery/DeliveryService";
 import { env } from "../../infra/config";
 import { encodeCb, decodeCb } from "../cb";
+import { logger } from "../../infra/logger";
+import { getDb } from "../../infra/db/sqlite";
 
 const carts: Map<number, OrderItem[]> = new Map();
 const lastMainMsg: Map<number, number> = new Map();
@@ -82,7 +84,7 @@ export function registerClientFlow(bot: TelegramBot) {
     try { await bot.answerCallbackQuery(q.id); } catch {}
     let data = q.data || "";
     data = decodeCb(data);
-    try { console.log('CLIENT CLICK', data); } catch {}
+    try { logger.info("CLIENT_CLICK", { data }); } catch {}
     if (data === "__expired__") {
       const chatId = q.message?.chat.id || 0;
       await bot.sendMessage(chatId, "Кнопка устарела. Нажмите /start, чтобы обновить меню.");
@@ -123,7 +125,7 @@ export function registerClientFlow(bot: TelegramBot) {
       return;
     }
     if (data === "menu_howto") {
-      const rows = [[{ text: "⬅️ Назад", callback_data: "back:main" }]];
+      const rows = [[{ text: "⬅️ Назад", callback_data: "back:main" }], [{ text: "🏠 Главное меню", callback_data: encodeCb("back:main") }]];
       try { await bot.deleteMessage(chatId, messageId); } catch {}
       await bot.sendMessage(chatId, "<b>❓ Как заказать</b>\n\n1️⃣ Нажмите «Каталог»\n2️⃣ Выберите вкус и добавьте в корзину\n3️⃣ Перейдите в «Корзину»\n4️⃣ Подтвердите заказ\n5️⃣ Согласуйте удобный слот с курьером\n\n⏱ Весь процесс занимает 1–2 минуты\n\nЕсли возникнут вопросы — мы всегда на связи 👌", { reply_markup: { inline_keyboard: rows }, parse_mode: "HTML" });
       return;
@@ -289,7 +291,8 @@ export function registerClientFlow(bot: TelegramBot) {
         const productsAll = await refreshProductsCache();
         const available = productsAll.filter((x) => x.active && x.category === "liquids" && !items.find((i) => i.product_id === x.product_id));
         for (let i = available.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = available[i]; available[i] = available[j]; available[j] = t; }
-        const pick = available.slice(0, 2);
+        const pick = available.slice(0, 3);
+        try { getDb().prepare("INSERT INTO events(date, type, user_id, payload) VALUES (?,?,?,?)").run(new Date().toISOString(), "upsell_offer", user_id, JSON.stringify({ suggestions: pick.map(x=>x.product_id) })); } catch {}
         let liquCount = 0; for (const it of items) { const ip = products.find((x) => x.product_id === it.product_id); if (ip && ip.category === "liquids") liquCount += it.qty; }
         const nextLabel = liquCount >= 2 ? "15.00 €" : "16.00 €";
         const rows: { text: string; callback_data: string }[][] = pick.map((s) => [{ text: `➕ Добавить вкус — ${nextLabel}`, callback_data: encodeCb(`add_upsell:${s.product_id}`) }]);
@@ -326,6 +329,7 @@ export function registerClientFlow(bot: TelegramBot) {
     if (!p) return;
     const price = p.category === "liquids" ? 16 : p.price;
     addToCart(user_id, p, true, price);
+    try { getDb().prepare("INSERT INTO events(date, type, user_id, payload) VALUES (?,?,?,?)").run(new Date().toISOString(), "upsell_accept", user_id, JSON.stringify({ product_id: pid, price })); } catch {}
     const items = carts.get(user_id) || [];
     const label = p.category === "liquids" ? "16.00 €" : fmtMoney(p.price);
     const totals = await previewTotals(user_id, items);
@@ -360,6 +364,7 @@ export function registerClientFlow(bot: TelegramBot) {
     const p = products.find((x) => x.product_id === pid);
     if (!p) return;
     addToCart(user_id, p, true);
+    try { getDb().prepare("INSERT INTO events(date, type, user_id, payload) VALUES (?,?,?,?)").run(new Date().toISOString(), "upsell_accept", user_id, JSON.stringify({ product_id: pid, price: p.price })); } catch {}
     const items = carts.get(user_id) || [];
     const totals = await previewTotals(user_id, items);
     let savings3 = 0;
@@ -445,7 +450,7 @@ export function registerClientFlow(bot: TelegramBot) {
         }
         keyboard.push(row);
       }
-      const backRow: TelegramBot.InlineKeyboardButton[][] = [[{ text: "⬅️ Назад", callback_data: encodeCb(`back:choose_courier:${order_id}`) }]];
+      const backRow: TelegramBot.InlineKeyboardButton[][] = [[{ text: "⬅️ Назад", callback_data: encodeCb(`back:choose_courier:${order_id}`) }], [{ text: "🏠 Главное меню", callback_data: encodeCb("back:main") }]];
       await bot.editMessageText(`<b>Доставка</b>\nКурьер: ${chosen?.name || "Курьер"}\nИнтервал: ${interval}\nВыберите точное время:`, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: keyboard.concat(backRow) }, parse_mode: "HTML" });
     } else if (data.startsWith("back:choose_courier:")) {
       const order_id = Number(data.split(":")[2]);
@@ -479,7 +484,7 @@ export function registerClientFlow(bot: TelegramBot) {
           }
           keyboard2.push(row);
         }
-        const backRow2: TelegramBot.InlineKeyboardButton[][] = [[{ text: "⬅️ Назад", callback_data: encodeCb(`back:choose_courier:${order_id}`) }]];
+        const backRow2: TelegramBot.InlineKeyboardButton[][] = [[{ text: "⬅️ Назад", callback_data: encodeCb(`back:choose_courier:${order_id}`) }], [{ text: "🏠 Главное меню", callback_data: encodeCb("back:main") }]];
         await bot.editMessageText(`<b>Слот занят</b>. Выберите другой.`, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: keyboard2.concat(backRow2) }, parse_mode: "HTML" });
         return;
       }
@@ -505,7 +510,13 @@ export function registerClientFlow(bot: TelegramBot) {
       ]];
         try {
           const uname = q.from.username ? `@${q.from.username}` : `${q.from.first_name || "Клиент"}`;
-          await bot.sendMessage(notifyTgId, `📦 Новый заказ #${order_id} (не выдан)\nКлиент: ${uname}\nИнтервал: ${interval}\nВремя: ${time}\n\n${lines}`, { reply_markup: { inline_keyboard: courierKeyboard }, parse_mode: "HTML" });
+          let promoMark = "";
+          try {
+            const ord = await getOrderById(order_id);
+            const { isOrderInPromo } = await import("../../domain/promo/PromoService");
+            if (ord && isOrderInPromo(ord.reserve_timestamp)) promoMark = " · скидка 10%";
+          } catch {}
+          await bot.sendMessage(notifyTgId, `📦 Новый заказ #${order_id} (не выдан${promoMark})\nКлиент: ${uname}\nИнтервал: ${interval}\nВремя: ${time}\n\n${lines}`, { reply_markup: { inline_keyboard: courierKeyboard }, parse_mode: "HTML" });
         } catch {}
       }
       // Контакт для локации будет отправлен после выбора оплаты

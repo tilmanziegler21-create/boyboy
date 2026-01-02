@@ -8,7 +8,8 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "start:prod": "npm run build && node dist/index.js",
-    "sa:extract": "node scripts/sa-extract.js"
+    "sa:extract": "node scripts/sa-extract.js",
+    "qa": "ts-node scripts/qa.ts"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.0",

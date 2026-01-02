@@ -20,6 +20,7 @@ export function registerAdminFlow(bot: TelegramBot) {
         [{ text: "Курьеры", callback_data: "admin_couriers" }],
         [{ text: "Назначить курьеров (до 3)", callback_data: "admin_assign_couriers" }],
         [{ text: "Отчёт за день", callback_data: "admin_report_today" }],
+        [{ text: "Upsell статистика", callback_data: "admin_upsell_stats" }],
         [{ text: "Скачать заказы (CSV)", callback_data: "admin_export_orders" }],
         [{ text: "Статус Sheets", callback_data: "admin_sheets_status" }],
         [{ text: "Запустить repair", callback_data: "admin_repair_now" }],
@@ -108,10 +109,31 @@ export function registerAdminFlow(bot: TelegramBot) {
         [{ text: "Курьеры", callback_data: "admin_couriers" }],
         [{ text: "Назначить курьеров (до 3)", callback_data: "admin_assign_couriers" }],
         [{ text: "Отчёт за день", callback_data: "admin_report_today" }],
+        [{ text: "Upsell статистика", callback_data: "admin_upsell_stats" }],
         [{ text: "Скачать заказы (CSV)", callback_data: "admin_export_orders" }]
       ];
       await bot.editMessageText("Админ-панель", { chat_id: chatId, message_id: q.message?.message_id!, reply_markup: { inline_keyboard: keyboard }, parse_mode: "HTML" });
       return;
+    }
+    if (finalData === "admin_upsell_stats") {
+      const db = getDb();
+      const today = new Date().toISOString().slice(0,10);
+      const offers = db.prepare("SELECT COUNT(1) AS c FROM events WHERE type='upsell_offer' AND substr(date,1,10)=?").get(today) as any;
+      const acceptsRows = db.prepare("SELECT payload FROM events WHERE type='upsell_accept' AND substr(date,1,10)=?").all(today) as any[];
+      const accepts = acceptsRows.length;
+      let extra = 0;
+      for (const r of acceptsRows) {
+        try { const p = JSON.parse(String(r.payload||'{}')); extra += Number(p.price||0); } catch {}
+      }
+      const rate = offers?.c ? Math.round((accepts / Number(offers.c)) * 100) : 0;
+      const lines = [
+        `Upsell предложения: ${Number(offers?.c||0)}`,
+        `Upsell приняты: ${accepts}`,
+        `Conversion: ${rate}%`,
+        `Доп. выручка: ${extra.toFixed(2)} €`
+      ];
+      const kb = [[{ text: "⬅️ Назад", callback_data: "admin_back" }], [{ text: "🏠 Главное меню", callback_data: "back:main" }]];
+      await bot.sendMessage(chatId, lines.join("\n"), { reply_markup: { inline_keyboard: kb } });
     }
     if (finalData === "admin_products") {
       const products = await getProducts();
@@ -166,11 +188,11 @@ export function registerAdminFlow(bot: TelegramBot) {
           await bot.sendMessage(chatId, "Выберите курьера (активно до 3)", { reply_markup: { inline_keyboard: rowsKb } });
         }
       }
-    } else if (finalData === "admin_report_today") {
+  } else if (finalData === "admin_report_today") {
       const db = getDb();
       const products = await getProducts();
       const today = new Date().toISOString().slice(0,10);
-      const delivered = db.prepare("SELECT items_json, payment_method FROM orders WHERE status='delivered' AND substr(reserve_timestamp,1,10)=?").all(today) as any[];
+      const delivered = db.prepare("SELECT items_json, payment_method, delivered_timestamp FROM orders WHERE status='delivered' AND substr(delivered_timestamp,1,10)=?").all(today) as any[];
       const byBrand: Record<string, string[]> = {};
       const cashTotals: number[] = [];
       const cardTotals: number[] = [];
@@ -237,13 +259,14 @@ export function registerAdminFlow(bot: TelegramBot) {
           .run(999, JSON.stringify(payload), totals, totals, 0, "delivered", day.toISOString(), day.toISOString());
       }
       await bot.sendMessage(chatId, "Демо-данные добавлены для наглядности");
-    } else if (finalData === "admin_promo15") {
+  } else if (finalData === "admin_promo15") {
       const db = getDb();
       const users = db.prepare("SELECT user_id FROM users").all() as any[];
+      try { const { startPromo15 } = await import("../../domain/promo/PromoService"); startPromo15(); } catch {}
       for (const u of users) {
-        try { await bot.sendMessage(Number(u.user_id), "🔥 Акция! Скидка на всю продукцию 15 минут. Успейте оформить заказ."); } catch {}
+        try { await bot.sendMessage(Number(u.user_id), "🔥 Акция! Скидка 10% на всё 15 минут. Успейте оформить заказ."); } catch {}
       }
-      await bot.sendMessage(chatId, "Акция запущена: рассылка отправлена");
+      await bot.sendMessage(chatId, "Акция запущена: 15 минут скидка 10% отмечается у курьера");
     } else if (finalData === "admin_reset_all") {
       const db = getDb();
       db.exec("DELETE FROM orders; DELETE FROM reservations; DELETE FROM events;");

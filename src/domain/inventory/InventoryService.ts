@@ -7,6 +7,13 @@ import { logger } from "../../infra/logger";
 import { addMinutes } from "../../core/time";
 
 const qtyReserved: Map<number, number> = new Map();
+const deductLocks: Map<number, Promise<void>> = new Map();
+async function runWithLock(pid: number, fn: () => Promise<void>) {
+  const prev = deductLocks.get(pid) || Promise.resolve();
+  const next = prev.then(fn).catch(() => {});
+  deductLocks.set(pid, next);
+  await next;
+}
 
 export async function restoreReservations() {
   const db = getDb();
@@ -70,13 +77,16 @@ export async function releaseReservation(items: OrderItem[], order_id?: number):
 }
 
 export async function finalDeduction(items: OrderItem[]): Promise<void> {
-  const products = await getProducts();
   for (const it of items) {
-    const p = products.find((x) => x.product_id === it.product_id);
-    if (!p) throw new Error("Product not found");
-    const newQty = p.qty_available - it.qty;
-    if (newQty < 0) throw new Error("Negative stock");
-    await updateProductQty(it.product_id, newQty);
+    await runWithLock(it.product_id, async () => {
+      const products = await getProducts();
+      const p = products.find((x) => x.product_id === it.product_id);
+      if (!p) throw new Error("Product not found");
+      const newQty = p.qty_available - it.qty;
+      if (newQty < 0) throw new Error("Negative stock");
+      await updateProductQty(it.product_id, newQty);
+      try { logger.info("finalDeduction", { product_id: it.product_id, new_qty: newQty }); } catch {}
+    });
   }
 }
 

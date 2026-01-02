@@ -120,7 +120,7 @@ export async function setDeliverySlot(order_id: number, interval: string, exact_
 
 export async function clearDeliverySlot(order_id: number): Promise<void> {
   const db = getDb();
-  db.prepare("UPDATE orders SET delivery_exact_time = NULL WHERE order_id = ?").run(order_id);
+  db.prepare("UPDATE orders SET delivery_exact_time = NULL, courier_id = NULL, status = 'pending' WHERE order_id = ?").run(order_id);
 }
 
 export async function setPaymentMethod(order_id: number, method: "card" | "cash"): Promise<void> {
@@ -154,7 +154,14 @@ export async function setDelivered(order_id: number, courier_tg_id: number): Pro
   const items: OrderItem[] = JSON.parse(row.items_json);
   await finalDeduction(items);
   await releaseReservation(items, order_id);
-  db.prepare("UPDATE orders SET status = 'delivered' WHERE order_id = ?").run(order_id);
+  const nowIso = new Date().toISOString();
+  db.prepare("UPDATE orders SET status = 'delivered', delivered_timestamp = ? WHERE order_id = ?").run(nowIso, order_id);
+  try {
+    const total = items.reduce((s, it) => s + Number(it.price) * Number(it.qty), 0);
+    db
+      .prepare("INSERT INTO events(date, type, order_id, user_id, payload) VALUES (?,?,?,?,?)")
+      .run(nowIso, "delivered", order_id, row.user_id, JSON.stringify({ items, total, courier_tg_id }));
+  } catch {}
   try { await updateAfterDelivery(Number(row.user_id), items); } catch {}
   try {
     const { getBackend } = await import("../../infra/backend");

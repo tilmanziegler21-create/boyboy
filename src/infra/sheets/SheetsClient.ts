@@ -185,15 +185,20 @@ export async function getProducts(): Promise<Product[]> {
     const m = s.match(/\d+/);
     return m ? Number(m[0]) : i + 1;
   };
+  const parseNum = (v: any, def: number = 0) => {
+    const s = String(v ?? "").trim().replace(/,/g, ".");
+    const n = Number(s);
+    return Number.isFinite(n) ? n : def;
+  };
   return rows
     .filter((r) => r.length > 0)
     .map((r, i) => ({
       product_id: idIdx >= 0 ? parseId(r[idIdx], i) : i + 1,
       title: r[titleIdx],
-      price: Number(r[priceIdx]),
+      price: parseNum(r[priceIdx]),
       category: categoryIdx >= 0 ? normCat(r[categoryIdx]) : "liquids",
       brand: brandIdx >= 0 ? (r[brandIdx] || null) : null,
-      qty_available: qtyIdx >= 0 ? Number(r[qtyIdx] || 0) : 0,
+      qty_available: qtyIdx >= 0 ? parseNum(r[qtyIdx] || 0) : 0,
       upsell_group_id: r[upsellIdx] ? Number(r[upsellIdx]) : null,
       reminder_offset_days: Number(r[remIdx] || 0),
       active: activeIdx >= 0 ? ["true", "1", "да", "yes"].includes(String(r[activeIdx]).trim().toLowerCase()) : true
@@ -240,9 +245,9 @@ export async function getCouriers(): Promise<Courier[]> {
   const nameIdx = headerIndexAny(headers, ["name", "имя"]);
   const tgIdx = headerIndexAny(headers, ["tg_id", "telegram_id", "chat_id"]);
   const activeIdx = headerIndexAny(headers, ["active", "is_active", "активен"]);
-  const intervalIdx = headerIndexAny(headers, ["last_delivery_interval", "interval", "delivery_interval"]);
-  const timeFromIdx = headerIndexAny(headers, ["time_from", "from", "start"]);
-  const timeToIdx = headerIndexAny(headers, ["time_to", "to", "end"]);
+  const intervalIdx = headerIndexAny(headers, ["last_delivery_interval", "interval", "delivery_interval", "интервал", "интервал_доставки", "последний_интервал"]);
+  const timeFromIdx = headerIndexAny(headers, ["time_from", "from", "start", "время_с", "время от", "начало", "с"]);
+  const timeToIdx = headerIndexAny(headers, ["time_to", "to", "end", "время_до", "время до", "конец", "до"]);
   return rows.map((r, i) => ({
     courier_id: idIdx >= 0 ? Number(r[idIdx]) : i + 1,
     name: nameIdx >= 0 ? r[nameIdx] : `Courier ${i + 1}`,

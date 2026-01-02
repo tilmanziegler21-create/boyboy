@@ -30,6 +30,71 @@ export async function registerCron() {
     }
   }, { timezone });
 
+  cron.schedule("5 10 * * *", async () => {
+    const db = getDb();
+    const bot = getBot();
+    const target = formatDate(new Date(Date.now() - 3 * 86400000));
+    const rows = db.prepare("SELECT user_id FROM users WHERE last_purchase_date IS NULL AND first_seen = ?").all(target) as any[];
+    for (const r of rows) {
+      try { await bot.sendMessage(Number(r.user_id), "👋 Возвращайтесь — посмотрите каталог и соберите заказ. Жидкости ELFIC/CHASER и электроника. Нажмите /start или кнопку ниже."); } catch {}
+    }
+  }, { timezone });
+
+  cron.schedule("0 22 * * *", async () => {
+    try {
+      const db = getDb();
+      const bot = getBot();
+      const today = new Date().toISOString().slice(0,10);
+      const rows = db.prepare("SELECT items_json, payment_method FROM orders WHERE status='delivered' AND substr(delivered_timestamp,1,10)=?").all(today) as any[];
+      const { getProducts } = await import("../data");
+      const products = await getProducts();
+      const byBrand: Record<string, string[]> = {};
+      const cashTotals: number[] = [];
+      const cardTotals: number[] = [];
+      for (const r of rows) {
+        const pm = String(r.payment_method || '').toLowerCase() === 'card' ? 'card' : 'cash';
+        let orderSum = 0;
+        const items = JSON.parse(r.items_json || '[]');
+        for (const i of items) {
+          const p = products.find((x) => x.product_id === i.product_id);
+          if (!p) continue;
+          const brand = p.brand ? p.brand : (p.category === 'electronics' ? 'ELECTRONICS' : 'LIQUIDS');
+          const arr = byBrand[brand] || [];
+          for (let k = 0; k < Number(i.qty); k++) arr.push(`- ${p.title} (${Number(i.price).toFixed(1)}€)`);
+          byBrand[brand] = arr;
+          orderSum += Number(i.price) * Number(i.qty);
+        }
+        if (pm === 'cash') cashTotals.push(orderSum); else cardTotals.push(orderSum);
+      }
+      const dd = new Date();
+      const dateLabel = `${String(dd.getDate()).padStart(2,'0')}.${String(dd.getMonth()+1).padStart(2,'0')}`;
+      const lines: string[] = [];
+      lines.push(dateLabel);
+      const brandOrder = Object.keys(byBrand);
+      for (const b of brandOrder) {
+        lines.push('');
+        lines.push(b);
+        for (const row of byBrand[b]) lines.push(row);
+      }
+      const sumCash = cashTotals.reduce((s,n)=>s+n,0);
+      const sumCard = cardTotals.reduce((s,n)=>s+n,0);
+      const sumAll = sumCash + sumCard;
+      const cashExpr = cashTotals.length ? `(${cashTotals[0].toFixed(0)}€)` + (cashTotals.slice(1).length ? 
+        cashTotals.slice(1).map(n=>`+ ${n.toFixed(0)}€`).join(' ') : '') : '0€';
+      lines.push('');
+      lines.push(`Cash: ${cashExpr}`);
+      lines.push(`Card: ${cardTotals.map(n=>`${n.toFixed(0)}€`).join(' + ') || '0€'}`);
+      lines.push('');
+      lines.push(`Итого за день: ${sumAll.toFixed(0)} евро общая, ${sumCash.toFixed(0)} кэш ${sumCard.toFixed(0)} карта`);
+      const adminIds = (process.env.TELEGRAM_ADMIN_IDS || '').split(',').map(s=>Number(s.trim())).filter(x=>x);
+      for (const id of adminIds) {
+        try { await bot.sendMessage(id, lines.join('\n')); } catch {}
+      }
+    } catch (e) {
+      logger.error("Admin daily report error", { error: String(e) });
+    }
+  }, { timezone });
+
   cron.schedule("0 0 * * *", async () => {
     try {
       const date = formatDate(new Date());

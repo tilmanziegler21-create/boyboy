@@ -35,6 +35,7 @@ export async function initDb() {
       delivery_interval TEXT,
       delivery_exact_time TEXT,
       payment_method TEXT,
+      delivered_timestamp TEXT,
       source TEXT,
       sheets_committed INTEGER DEFAULT 0
     );
@@ -84,5 +85,8 @@ export async function initDb() {
   } catch {}
   try {
     db.exec("ALTER TABLE orders ADD COLUMN payment_method TEXT");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE orders ADD COLUMN delivered_timestamp TEXT");
   } catch {}
 }

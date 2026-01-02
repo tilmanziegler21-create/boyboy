@@ -1,5 +1,9 @@
 node_modules/
 dist/
-.env
 data/
+.env
+.env.*
+service-account.json
 secrets/
+.DS_Store
+*.log

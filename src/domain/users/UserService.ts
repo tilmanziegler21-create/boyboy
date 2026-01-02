@@ -33,12 +33,12 @@ export async function updateAfterDelivery(user_id: number, items: OrderItem[]): 
   const db = getDb();
   const today = formatDate(new Date());
   const products = await getProducts();
-  let liquidsQty = 0;
+  let units = 0;
   for (const it of items) {
     const p = products.find((x) => x.product_id === it.product_id);
-    if (p && p.category === "liquids") liquidsQty += Number(it.qty);
+    if (p && (p.category === "liquids" || p.category === "electronics")) units += Number(it.qty);
   }
-  const offsetDays = liquidsQty >= 2 ? 24 : (liquidsQty >= 1 ? 14 : 0);
+  const offsetDays = units >= 2 ? 24 : (units >= 1 ? 12 : 0);
   const next = offsetDays > 0 ? formatDate(addDays(new Date(), offsetDays)) : null;
   db.prepare("UPDATE users SET last_purchase_date = ?, next_reminder_date = ? WHERE user_id = ?").run(today, next, user_id);
   try {
