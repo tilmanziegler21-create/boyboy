@@ -312,10 +312,12 @@ export function registerClientFlow(bot: TelegramBot) {
       const textLiquids = `💧 ${p.title} добавлен\n${liquCountNow} шт — ${currentUnit}\n\n🔥 Следующий вкус — ${nextUnit}\n🔥 От 3 шт — по 15 € за каждую\n\nИтого: <b>${totals.total_with_discount.toFixed(2)} €</b>${savings > 0 ? ` · Экономия: ${savings.toFixed(2)} €` : ""}`;
       const textElectronics = `💨 ${p.title} добавлен — ${fmtMoney(p.price)}\n${renderCart(items, products)}\n\nИтого: <b>${totals.total_with_discount.toFixed(2)} €</b>`;
       const outText = p.category === "liquids" ? textLiquids : textElectronics;
-      try {
-        await bot.editMessageText(outText, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: finalKeyboard }, parse_mode: "HTML" });
-      } catch {
-        await bot.sendMessage(chatId, outText, { reply_markup: { inline_keyboard: finalKeyboard }, parse_mode: "HTML" });
+      if (p.category !== "liquids") {
+        try {
+          await bot.editMessageText(outText, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: finalKeyboard }, parse_mode: "HTML" });
+        } catch {
+          await bot.sendMessage(chatId, outText, { reply_markup: { inline_keyboard: finalKeyboard }, parse_mode: "HTML" });
+        }
       }
       if (p.category === "liquids") {
         try {
@@ -710,7 +712,22 @@ async function showGamifiedUpsellInline(bot: TelegramBot, chatId: number, messag
     for (const s of pick) dbx.prepare("INSERT INTO upsell_events(user_id, product_id, event_type, timestamp) VALUES (?,?,?,?)").run(user_id, s.product_id, "offered", Date.now());
   } catch {}
   const rerollsLeft = 3 - rerollCount;
-  const msg = `🎲 Попробуй эти вкусы:\n\n🎰 Рероллов осталось: ${rerollsLeft}`;
+  const totals = await previewTotals(user_id, items);
+  const savingsNow = computeSavings(items, all);
+  let liquCount = 0;
+  for (const it of items) {
+    const p = all.find((x)=>x.product_id===it.product_id);
+    if (p && p.category === "liquids") liquCount += it.qty;
+  }
+  const nextUnitPrice = liquCount >= 2 ? "15.00 €" : "16.00 €";
+  const motivation = liquCount === 0
+    ? `🔥 Следующий вкус — всего ${nextUnitPrice} (вместо 18 €)`
+    : (liquCount === 1 ? `🔥 Следующий вкус — всего ${nextUnitPrice} (вместо 18 €)`
+    : (liquCount === 2 ? `🔥 От 3 шт — по 15 € каждая!`
+    : `🔥 Все вкусы по 15 €!`));
+  const cartLines = renderCart(items, all);
+  const header = `${cartLines}\n\n💰 Итог: ${totals.total_with_discount.toFixed(2)} €${savingsNow>0?`\n💚 Экономия: ${savingsNow.toFixed(2)} €`:''}\n${motivation}\n\n━━━━━━━━━━━━━━━━`;
+  const msg = `${header}\n🎲 Попробуй эти вкусы:\n🎰 Рероллов осталось: ${rerollsLeft}`;
   const unitNext = (() => {
     let liquCount = 0;
     for (const it of items) {
