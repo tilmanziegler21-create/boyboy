@@ -106,22 +106,22 @@ export class GoogleSheetsBackend implements DataBackend {
   }
 
   async appendOrder(order: any): Promise<void> {
-    const s = sheetName("orders", order.city);
+    const s = sheetName("orders", order.city || getDefaultCity());
     const row = [
-      String(order.order_id),
-      String(order.user_tg_id),
-      String(order.username || ""),
-      String(order.city || getDefaultCity()),
-      String(order.status || "pending"),
-      String(order.items_json || "[]"),
-      Number(order.total || 0).toFixed(2),
-      String(order.courier_id || ""),
-      String(order.slot_time || ""),
-      String(order.created_at || new Date().toISOString()),
-      String(order.delivered_at || ""),
-      "0"
+      String(order.order_id),                      // A: order_id
+      String(order.user_tg_id),                    // B: user_id
+      String(order.status || "pending"),           // C: status
+      Number(order.total || 0).toFixed(2),         // D: total_amount
+      String(order.courier_id || ""),              // E: courier_id
+      String(order.delivery_date || ""),           // F: delivery_date
+      String(order.slot_time || ""),               // G: delivery_time
+      String(order.payment_method || ""),          // H: payment_method
+      String(order.created_at || new Date().toISOString()), // I: created_at
+      String(order.delivered_at || ""),            // J: delivered_at
+      String(order.items_json || "[]"),            // K: items (JSON)
+      String(order.city || getDefaultCity())       // L: city
     ];
-    await append(s, [row]);
+    await append(`${s}!A:L`, [row]);
   }
 
   async commitDelivery(orderId: number): Promise<void> {
@@ -169,26 +169,22 @@ export class GoogleSheetsBackend implements DataBackend {
     const nowIso = new Date().toISOString();
     const found = await findRowByKey(s, "order_id", String(row.order_id));
     if (found) {
-      // E: status
-      await update(`${s}!E${found.rowIndex + 1}`, [["delivered"]]);
-      // K: delivered_at
-      await update(`${s}!K${found.rowIndex + 1}`, [[nowIso]]);
-      // L: sheets_committed
-      await update(`${s}!L${found.rowIndex + 1}`, [["1"]]);
+      await update(`${s}!C${found.rowIndex + 1}`, [["delivered"]]); // C: status
+      await update(`${s}!J${found.rowIndex + 1}`, [[nowIso]]);      // J: delivered_at
     } else {
-      await append(s, [[
-        String(row.order_id),
-        "",
-        "",
-        city,
-        "delivered",
-        String(row.items_json || "[]"),
-        Number(row.total_with_discount).toFixed(2),
-        "",
-        "",
-        String(new Date().toISOString()),
-        String(nowIso),
-        "1"
+      await append(`${s}!A:L`, [[
+        String(row.order_id),    // A
+        "",                      // B user_id
+        "delivered",             // C status
+        Number(row.total_with_discount).toFixed(2), // D total_amount
+        "",                      // E courier_id
+        "",                      // F delivery_date
+        "",                      // G delivery_time
+        "",                      // H payment_method
+        String(new Date().toISOString()), // I created_at
+        String(nowIso),          // J delivered_at
+        String(row.items_json || "[]"), // K items
+        city                     // L city
       ]]);
     }
     db.prepare("UPDATE orders SET sheets_committed=1 WHERE order_id = ?").run(orderId);
@@ -198,24 +194,23 @@ export class GoogleSheetsBackend implements DataBackend {
     const s = sheetName("metrics", city);
     const found = await findRowByKey(s, "date", date);
     const row = [
-      metrics.date,
-      city,
-      String(metrics.orders),
-      metrics.revenue.toFixed(2),
-      metrics.avg_check.toFixed(2),
-      String(metrics.upsell_clicks),
-      String(metrics.upsell_accepts),
-      String(metrics.repeat_purchases),
-      String(metrics.liquids_sales),
-      String(metrics.electronics_sales),
-      String(metrics.growth_percent),
-      (metrics.platform_commission || (metrics.revenue*0.05)).toFixed(2),
-      (metrics.courier_commission || (metrics.revenue*0.20)).toFixed(2)
+      metrics.date,                                      // A: date
+      String(metrics.orders),                            // B: orders
+      metrics.revenue.toFixed(2),                        // C: revenue
+      metrics.avg_check.toFixed(2),                      // D: avg_check
+      String(metrics.upsell_clicks),                     // E: upsell_clicks
+      String(metrics.upsell_accepts),                    // F: upsell_accepts
+      String(metrics.repeat_purchases),                  // G: repeat_purchase
+      String(metrics.liquids_sales),                     // H: liquids_sales
+      String(metrics.electronics_sales),                 // I: electronics_sales
+      String(metrics.growth_percent),                    // J: growth_percent
+      (metrics.platform_commission || (metrics.revenue*0.05)).toFixed(2), // K
+      (metrics.courier_commission || (metrics.revenue*0.20)).toFixed(2)   // L
     ];
     if (found) {
-      await update(s+"!A"+(found.rowIndex+1), [row]);
+      await update(`${s}!A${found.rowIndex + 1}:L${found.rowIndex + 1}`, [row]);
     } else {
-      await append(s, [row]);
+      await append(`${s}!A:L`, [row]);
     }
   }
 }
