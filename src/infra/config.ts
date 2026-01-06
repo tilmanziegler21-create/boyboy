@@ -3,6 +3,7 @@ import fs from "fs";
 type Env = {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_ADMIN_IDS: string;
+  METRICS_TOKEN?: string;
   GOOGLE_SHEETS_SPREADSHEET_ID: string;
   GOOGLE_SERVICE_ACCOUNT_EMAIL: string;
   GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: string;
@@ -40,6 +41,7 @@ if (DATA_BACKEND === "sheets") {
 export const env: Env = {
   TELEGRAM_BOT_TOKEN: requireEnv("TELEGRAM_BOT_TOKEN"),
   TELEGRAM_ADMIN_IDS: process.env.TELEGRAM_ADMIN_IDS || "",
+  METRICS_TOKEN: process.env.METRICS_TOKEN || "",
   GOOGLE_SHEETS_SPREADSHEET_ID:
     DATA_BACKEND === "sheets" ? requireEnv("GOOGLE_SHEETS_SPREADSHEET_ID") : process.env.GOOGLE_SHEETS_SPREADSHEET_ID || "",
   GOOGLE_SERVICE_ACCOUNT_EMAIL:

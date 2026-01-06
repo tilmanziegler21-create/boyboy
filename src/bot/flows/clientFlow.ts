@@ -70,7 +70,7 @@ export function registerClientFlow(bot: TelegramBot) {
       [{ text: "⭐ Отзывы", url: env.REVIEWS_URL || "https://t.me/" }]
     ];
     const admins = (env.TELEGRAM_ADMIN_IDS || "").split(",").map((s) => Number(s.trim())).filter((x) => x);
-    if (admins.includes(user_id) || user_id === 8358091146) rows.push([{ text: "Админ", callback_data: "admin_open" }]);
+    if (admins.includes(user_id)) rows.push([{ text: "Админ", callback_data: "admin_open" }]);
     const prev = lastMainMsg.get(user_id);
     if (prev) { try { await bot.deleteMessage(msg.chat.id, prev); } catch {} }
     const sent = await bot.sendMessage(
