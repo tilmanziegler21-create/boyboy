@@ -317,10 +317,9 @@ export function registerClientFlow(bot: TelegramBot) {
       } catch {
         await bot.sendMessage(chatId, outText, { reply_markup: { inline_keyboard: finalKeyboard }, parse_mode: "HTML" });
       }
-      // Gamified upsell for liquids
       if (p.category === "liquids") {
         try {
-          await showGamifiedUpsell(bot, chatId, user_id, "liquids", new Set((items||[]).map(i=>i.product_id)));
+          await showGamifiedUpsellInline(bot, chatId, messageId, user_id, "liquids", new Set((items||[]).map(i=>i.product_id)));
         } catch {}
       }
     } else if (data === "show_upsell") {
@@ -588,14 +587,14 @@ export function registerClientFlow(bot: TelegramBot) {
       const items = carts.get(user_id) || [];
       const totals = await previewTotals(user_id, items);
       const savingsNow = computeSavings(items, products);
-      const msg = `✅ ${p.title} добавлен!\n\n💰 Итог: ${totals.total_with_discount.toFixed(2)} €${savingsNow>0?`\n💚 Экономия: ${savingsNow.toFixed(2)} €`:''}`;
-      try { await bot.sendMessage(chatId, msg, { parse_mode: "HTML" }); } catch {}
+      const msg = `✅ ${p.title} добавлен!\n\n💰 Итог: ${totals.total_with_discount.toFixed(2)} €${savingsNow>0?`\n💚 Экономия: ${savingsNow.toFixed(2)} €`:''}\n\n━━━━━━━━━━━━━━━━`;
+      try { await bot.editMessageText(msg, { chat_id: chatId, message_id: messageId, parse_mode: "HTML" }); } catch {}
       // reset rerolls and show next upsell cycle (limit overall to 5)
       const totalUpsells = items.reduce((s,i)=>s+(i.is_upsell?i.qty:0),0);
       upsellRerolls.set(user_id, 0);
       const exclude = new Set(items.map(i=>i.product_id));
       if (p.category === "liquids" && totalUpsells < 5) {
-        try { await showGamifiedUpsell(bot, chatId, user_id, "liquids", exclude); } catch {}
+        try { await showGamifiedUpsellInline(bot, chatId, messageId, user_id, "liquids", exclude); } catch {}
       }
     } else if (data.startsWith("gam_upsell_reroll:")) {
       const category = data.split(":")[1];
@@ -606,7 +605,14 @@ export function registerClientFlow(bot: TelegramBot) {
       const exclude = new Set(items.map(i=>i.product_id));
       const shownSet = upsellShown.get(user_id) || new Set<number>();
       for (const s of shownSet) exclude.add(s);
-      await showGamifiedUpsell(bot, chatId, user_id, category, exclude);
+      const products2 = await getProducts();
+      const totals2 = await previewTotals(user_id, items);
+      const savings2 = computeSavings(items, products2);
+      const spin = `✅ Товар добавлен!\n\n${renderCart(items, products2)}\n\n💰 Итог: ${totals2.total_with_discount.toFixed(2)} €${savings2>0?`\n💚 Экономия: ${savings2.toFixed(2)} €`:''}\n\n━━━━━━━━━━━━━━━━\n🎲 Крутим барабан...`;
+      try { await bot.editMessageText(spin, { chat_id: chatId, message_id: messageId, parse_mode: "HTML", reply_markup: { inline_keyboard: [] } }); } catch {}
+      setTimeout(async () => {
+        await showGamifiedUpsellInline(bot, chatId, messageId, user_id, category, exclude);
+      }, 500);
     }
   });
 }
@@ -673,11 +679,14 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-async function showGamifiedUpsell(bot: TelegramBot, chatId: number, user_id: number, category: string, exclude: Set<number>) {
+async function showGamifiedUpsellInline(bot: TelegramBot, chatId: number, messageId: number, user_id: number, category: string, exclude: Set<number>) {
   const rerollCount = upsellRerolls.get(user_id) || 0;
   if (rerollCount >= 3) {
-    const kb: TelegramBot.InlineKeyboardButton[][] = [[{ text: "🛒 Перейти в корзину", callback_data: encodeCb("cart_open") }]];
-    await bot.sendMessage(chatId, "🔥 Отличный выбор!", { reply_markup: { inline_keyboard: kb } });
+    const kb: TelegramBot.InlineKeyboardButton[][] = [
+      [{ text: "✅ Оформить заказ", callback_data: encodeCb("confirm_order") }],
+      [{ text: "🛒 Корзина", callback_data: encodeCb("cart_open") }]
+    ];
+    await bot.editMessageText("🔥 Отличный выбор!", { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: kb } });
     return;
   }
   const all = await refreshProductsCache();
@@ -685,8 +694,11 @@ async function showGamifiedUpsell(bot: TelegramBot, chatId: number, user_id: num
   const inCart = new Set(items.map(i=>i.product_id));
   const pool = all.filter(p => p.active && p.category === category && !inCart.has(p.product_id) && !exclude.has(p.product_id));
   if (pool.length < 2) {
-    const kb: TelegramBot.InlineKeyboardButton[][] = [[{ text: "🛒 Перейти в корзину", callback_data: encodeCb("cart_open") }]];
-    await bot.sendMessage(chatId, "🔥 Отличный выбор!", { reply_markup: { inline_keyboard: kb } });
+    const kb: TelegramBot.InlineKeyboardButton[][] = [
+      [{ text: "✅ Оформить заказ", callback_data: encodeCb("confirm_order") }],
+      [{ text: "🛒 Корзина", callback_data: encodeCb("cart_open") }]
+    ];
+    await bot.editMessageText("🔥 Отличный выбор!", { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: kb } });
     return;
   }
   const pick = shuffle(pool).slice(0, 2);
@@ -712,8 +724,9 @@ async function showGamifiedUpsell(bot: TelegramBot, chatId: number, user_id: num
     [{ text: `💧 ${pick[1].title} — ${category==="liquids"?unitNext:fmtMoney(pick[1].price)}`, callback_data: encodeCb(`gam_upsell_add:${pick[1].product_id}`) }]
   ];
   if (rerollCount < 3) kb.push([{ text: "🎲 Реролл (другие вкусы)", callback_data: encodeCb(`gam_upsell_reroll:${category}`) }]);
-  kb.push([{ text: "🛒 Перейти в корзину", callback_data: encodeCb("cart_open") }]);
-  await bot.sendMessage(chatId, msg, { reply_markup: { inline_keyboard: kb } });
+  kb.push([{ text: "✅ Оформить заказ", callback_data: encodeCb("confirm_order") }]);
+  kb.push([{ text: "🛒 Корзина", callback_data: encodeCb("cart_open") }]);
+  await bot.editMessageText(msg, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: kb } });
 }
 
 async function currentUnitPrice(user_id: number, products: Product[]): Promise<number> {
