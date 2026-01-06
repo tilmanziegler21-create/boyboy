@@ -147,7 +147,11 @@ export async function setDelivered(order_id: number, courier_tg_id: number): Pro
     logger.warn("Deliver refused: order not found", { order_id });
     return;
   }
-  if (row.courier_id == null || Number(row.courier_id) !== Number(courier_tg_id)) {
+  const map = db.prepare("SELECT tg_id, courier_id FROM couriers WHERE tg_id = ? OR courier_id = ?").get(courier_tg_id, courier_tg_id) as any;
+  const idA = Number(map?.tg_id || courier_tg_id);
+  const idB = Number(map?.courier_id || courier_tg_id);
+  const okMatch = row.courier_id != null && (Number(row.courier_id) === idA || Number(row.courier_id) === idB);
+  if (!okMatch) {
     logger.warn("Deliver refused: courier mismatch", { order_id, expected: row.courier_id, actual: courier_tg_id });
     return;
   }
