@@ -8,6 +8,7 @@ import fs from "fs";
 import { getDb } from "../../infra/db/sqlite";
 import { ReportService } from "../../services/ReportService";
 import { getDefaultCity } from "../../infra/backend";
+import { sendDailySummary } from "../../infra/cron/scheduler";
 
 function isAdmin(id: number) {
   const list = (env.TELEGRAM_ADMIN_IDS || "").split(",").map((s) => Number(s.trim())).filter((x) => x);
@@ -33,6 +34,22 @@ export function registerAdminFlow(bot: TelegramBot) {
       ];
     await bot.sendMessage(msg.chat.id, "Админ-панель", { reply_markup: { inline_keyboard: keyboard }, parse_mode: "HTML" });
   });
+
+  bot.onText(/\/test_summary/, async (ctx) => {
+    const adminIds = process.env.TELEGRAM_ADMIN_IDS?.split(',') || [];
+    if (!adminIds.includes(ctx.from?.id.toString() || '')) {
+      return;
+    }
+    try {
+      await bot.sendMessage(ctx.chat.id, '⏳ Генерирую тестовую сводку...');
+      await sendDailySummary();
+      await bot.sendMessage(ctx.chat.id, '✅ Сводка отправлена');
+    } catch (error: any) {
+      console.error('[TEST SUMMARY ERROR]:', error);
+      await bot.sendMessage(ctx.chat.id, `❌ Ошибка: ${error.message}`);
+    }
+  });
+
   bot.on("message", async (msg) => {
     if (!isAdmin(msg.from?.id || 0)) return;
     const awaiting = priceEditAwait.get(msg.from!.id);

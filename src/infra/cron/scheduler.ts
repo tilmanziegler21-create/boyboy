@@ -12,6 +12,68 @@ import { NOT_ISSUED_DELETE_AFTER_MINUTES } from "../../core/constants";
 import { shopConfig } from "../../config/shopConfig";
 import { ReportService } from "../../services/ReportService";
 
+export async function sendDailySummary() {
+  try {
+    const db = getDb();
+    const bot = getBot();
+    const today = new Date().toISOString().slice(0,10);
+    const start = Date.parse(`${today}T00:00:00.000Z`);
+    const end = start + 86400000;
+    const rs = new ReportService();
+    const report = await rs.getTodayReport(shopConfig.cityCode);
+    const pay = db.prepare("SELECT payment_method, SUM(total_with_discount) AS sum FROM orders WHERE status='delivered' AND ((delivered_at_ms >= ? AND delivered_at_ms < ?) OR (delivered_at_ms IS NULL AND substr(delivered_timestamp,1,10)=?)) GROUP BY payment_method").all(start, end, today) as any[];
+    const cash = Number((pay.find((x)=>String(x.payment_method||'').toLowerCase()==='cash')?.sum) || 0);
+    const card = Number((pay.find((x)=>String(x.payment_method||'').toLowerCase()==='card')?.sum) || 0);
+    let upsellOffered = 0, upsellAccepted = 0, upsellRerolls = 0, upsellRevenue = 0;
+    try {
+      const offeredRows = db.prepare("SELECT COUNT(1) AS c FROM upsell_events WHERE event_type='offered' AND timestamp >= ? AND timestamp < ?").get(start, end) as any;
+      const acceptedRows = db.prepare("SELECT COUNT(1) AS c FROM upsell_events WHERE event_type='accepted' AND timestamp >= ? AND timestamp < ?").get(start, end) as any;
+      const rerollRows = db.prepare("SELECT COUNT(1) AS c FROM upsell_events WHERE event_type='reroll' AND timestamp >= ? AND timestamp < ?").get(start, end) as any;
+      upsellOffered = Number(offeredRows?.c || 0);
+      upsellAccepted = Number(acceptedRows?.c || 0);
+      upsellRerolls = Number(rerollRows?.c || 0);
+      const rows = db.prepare("SELECT items_json FROM orders WHERE status='delivered' AND ((delivered_at_ms >= ? AND delivered_at_ms < ?) OR (delivered_at_ms IS NULL AND substr(delivered_timestamp,1,10)=?))").all(start, end, today) as any[];
+      for (const r of rows) {
+        const items = JSON.parse(String(r.items_json||'[]'));
+        for (const i of items) if (i.is_upsell) upsellRevenue += Number(i.price)*Number(i.qty||1);
+      }
+    } catch {}
+    const effectiveOffers = Math.max(upsellOffered - upsellRerolls, 1);
+    const conv = Math.round((upsellAccepted / effectiveOffers) * 1000) / 10;
+    const itemsBlock = Object.entries(report.itemsSold || {}).map(([name,count])=>`• ${name}: ${count} шт`).join('\n') || '(нет данных)';
+    const summary = [
+      `📊 Отчёт за сегодня (${report.date})`,
+      ``,
+      `🏪 Магазин: ${shopConfig.shopName}`,
+      `🏙 Город: ${shopConfig.cityCode}`,
+      `📦 Заказов: ${report.orders}`,
+      `💰 Выручка: ${report.revenue.toFixed(2)}€`,
+      `💵 Доля (5%): ${report.yourShare.toFixed(2)}€`,
+      `🔥 Топ товар: ${report.topItem}`,
+      ``,
+      `💳 Способы оплаты:`,
+      `Cash: ${cash.toFixed(2)}€`,
+      `Card: ${card.toFixed(2)}€`,
+      ``,
+      `🎲 Upsell (геймификация):`,
+      `Предложено: ${upsellOffered}`,
+      `Рероллов: ${upsellRerolls}`,
+      `Принято: ${upsellAccepted}`,
+      `Конверсия: ${conv}%`,
+      `Доп. выручка: ${upsellRevenue.toFixed(2)}€`,
+      ``,
+      `📦 Продано товаров:`,
+      `${itemsBlock}`
+    ].join('\n');
+    const adminIds = (process.env.TELEGRAM_ADMIN_IDS || '').split(',').map(s=>Number(s.trim())).filter(x=>x);
+    for (const id of adminIds) {
+      try { await bot.sendMessage(id, summary); } catch {}
+    }
+  } catch (e) {
+    logger.error("Admin daily report error", { error: String(e) });
+  }
+}
+
 export async function registerCron() {
   const timezone = "Europe/Berlin";
   cron.schedule("*/1 * * * *", async () => {
@@ -45,65 +107,7 @@ export async function registerCron() {
   }, { timezone });
 
   cron.schedule("0 22 * * *", async () => {
-    try {
-      const db = getDb();
-      const bot = getBot();
-      const today = new Date().toISOString().slice(0,10);
-      const start = Date.parse(`${today}T00:00:00.000Z`);
-      const end = start + 86400000;
-      const rs = new ReportService();
-      const report = await rs.getTodayReport(shopConfig.cityCode);
-      const pay = db.prepare("SELECT payment_method, SUM(total_with_discount) AS sum FROM orders WHERE status='delivered' AND ((delivered_at_ms >= ? AND delivered_at_ms < ?) OR (delivered_at_ms IS NULL AND substr(delivered_timestamp,1,10)=?)) GROUP BY payment_method").all(start, end, today) as any[];
-      const cash = Number((pay.find((x)=>String(x.payment_method||'').toLowerCase()==='cash')?.sum) || 0);
-      const card = Number((pay.find((x)=>String(x.payment_method||'').toLowerCase()==='card')?.sum) || 0);
-      let upsellOffered = 0, upsellAccepted = 0, upsellRerolls = 0, upsellRevenue = 0;
-      try {
-        const offeredRows = db.prepare("SELECT COUNT(1) AS c FROM upsell_events WHERE event_type='offered' AND timestamp >= ? AND timestamp < ?").get(start, end) as any;
-        const acceptedRows = db.prepare("SELECT COUNT(1) AS c FROM upsell_events WHERE event_type='accepted' AND timestamp >= ? AND timestamp < ?").get(start, end) as any;
-        const rerollRows = db.prepare("SELECT COUNT(1) AS c FROM upsell_events WHERE event_type='reroll' AND timestamp >= ? AND timestamp < ?").get(start, end) as any;
-        upsellOffered = Number(offeredRows?.c || 0);
-        upsellAccepted = Number(acceptedRows?.c || 0);
-        upsellRerolls = Number(rerollRows?.c || 0);
-        const rows = db.prepare("SELECT items_json FROM orders WHERE status='delivered' AND ((delivered_at_ms >= ? AND delivered_at_ms < ?) OR (delivered_at_ms IS NULL AND substr(delivered_timestamp,1,10)=?))").all(start, end, today) as any[];
-        for (const r of rows) {
-          const items = JSON.parse(String(r.items_json||'[]'));
-          for (const i of items) if (i.is_upsell) upsellRevenue += Number(i.price)*Number(i.qty||1);
-        }
-      } catch {}
-      const effectiveOffers = Math.max(upsellOffered - upsellRerolls, 1);
-      const conv = Math.round((upsellAccepted / effectiveOffers) * 1000) / 10;
-      const itemsBlock = Object.entries(report.itemsSold || {}).map(([name,count])=>`• ${name}: ${count} шт`).join('\n') || '(нет данных)';
-      const summary = [
-        `📊 Отчёт за сегодня (${report.date})`,
-        ``,
-        `🏪 Магазин: ${shopConfig.shopName}`,
-        `🏙 Город: ${shopConfig.cityCode}`,
-        `📦 Заказов: ${report.orders}`,
-        `💰 Выручка: ${report.revenue.toFixed(2)}€`,
-        `💵 Доля (5%): ${report.yourShare.toFixed(2)}€`,
-        `🔥 Топ товар: ${report.topItem}`,
-        ``,
-        `💳 Способы оплаты:`,
-        `Cash: ${cash.toFixed(2)}€`,
-        `Card: ${card.toFixed(2)}€`,
-        ``,
-        `🎲 Upsell (геймификация):`,
-        `Предложено: ${upsellOffered}`,
-        `Рероллов: ${upsellRerolls}`,
-        `Принято: ${upsellAccepted}`,
-        `Конверсия: ${conv}%`,
-        `Доп. выручка: ${upsellRevenue.toFixed(2)}€`,
-        ``,
-        `📦 Продано товаров:`,
-        `${itemsBlock}`
-      ].join('\n');
-      const adminIds = (process.env.TELEGRAM_ADMIN_IDS || '').split(',').map(s=>Number(s.trim())).filter(x=>x);
-      for (const id of adminIds) {
-        try { await bot.sendMessage(id, summary); } catch {}
-      }
-    } catch (e) {
-      logger.error("Admin daily report error", { error: String(e) });
-    }
+    await sendDailySummary();
   }, { timezone });
 
   cron.schedule("0 0 * * *", async () => {

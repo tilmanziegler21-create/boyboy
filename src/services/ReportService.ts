@@ -23,6 +23,7 @@ export class ReportService {
       const rows = values.slice(1);
       const idx = (name: string) => headers.indexOf(name);
       const createdIdx = idx("created_at");
+      const statusIdx = idx("status");
       const totalIdx = idx("total_amount") >= 0 ? idx("total_amount") : idx("total");
       const itemsIdx = idx("items_json");
       let totalOrders = 0;
@@ -30,7 +31,8 @@ export class ReportService {
       const itemsSold: Record<string, number> = {};
       for (const r of rows) {
         const created = String(createdIdx >= 0 ? r[createdIdx] || "" : "").split("T")[0];
-        if (created === date) {
+        const status = String(statusIdx >= 0 ? r[statusIdx] || "" : "").toLowerCase();
+        if (created === date && status === "delivered") {
           totalOrders++;
           const amt = Number(totalIdx >= 0 ? r[totalIdx] || 0 : 0);
           totalRevenue += isNaN(amt) ? 0 : amt;
