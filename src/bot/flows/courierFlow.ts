@@ -4,6 +4,8 @@ import { setDelivered, getOrderById } from "../../domain/orders/OrderService";
 import { getProducts } from "../../infra/data";
 import { encodeCb, decodeCb } from "../cb";
 import { logger } from "../../infra/logger";
+import { batchGet } from "../../infra/sheets/SheetsClient";
+import { shopConfig } from "../../config/shopConfig";
 
 export function registerCourierFlow(bot: TelegramBot) {
   bot.onText(/\/courier/, async (msg) => {
@@ -15,11 +17,43 @@ export function registerCourierFlow(bot: TelegramBot) {
     const myList = db
       .prepare("SELECT o.order_id, o.user_id, o.delivery_interval, o.delivery_exact_time, u.username FROM orders o LEFT JOIN users u ON o.user_id=u.user_id WHERE o.status IN ('pending','courier_assigned') AND o.courier_id IN (?, ?) ORDER BY o.order_id DESC LIMIT 100")
       .all(idA, idB) as any[];
-    const lines = myList.map((o) => `#${o.order_id} ${o.username ? "@" + o.username : "Клиент"} · ${o.delivery_exact_time || "?"}`);
-    const keyboard = myList.map((o) => [
+    let lines = myList.map((o) => `#${o.order_id} ${o.username ? "@" + o.username : "Клиент"} · ${o.delivery_exact_time || "?"}`);
+    let keyboard = myList.map((o) => [
       { text: `Выдача ${o.order_id}`, callback_data: encodeCb(`courier_issue:${o.order_id}`) },
       { text: `Не выдано ${o.order_id}`, callback_data: encodeCb(`courier_not_issued:${o.order_id}`) }
     ]);
+    if (myList.length === 0) {
+      try {
+        const s = `orders_${shopConfig.cityCode}`;
+        const vr = await batchGet([`${s}!A:L`]);
+        const values = vr[0]?.values || [];
+        const headers = values[0] || [];
+        const rows = values.slice(1);
+        const idx = (name: string) => headers.indexOf(name);
+        const idIdx = idx("order_id");
+        const courierIdx = idx("courier_id");
+        const statusIdx = idx("status");
+        const timeIdx = idx("delivery_time");
+        const dateIdx = idx("delivery_date");
+        const userIdx = idx("user_id");
+        const pending = rows.filter((r) => {
+          const cid = String(courierIdx >= 0 ? r[courierIdx] || "" : "");
+          const st = String(statusIdx >= 0 ? r[statusIdx] || "" : "").toLowerCase();
+          return (cid === String(idA) || cid === String(idB)) && (st === "pending" || st === "courier_assigned" || st === "confirmed");
+        }).map((r) => ({
+          order_id: Number(idIdx >= 0 ? r[idIdx] || 0 : 0),
+          user_id: Number(userIdx >= 0 ? r[userIdx] || 0 : 0),
+          delivery_exact_time: `${String(dateIdx>=0?r[dateIdx]||"": "")} ${String(timeIdx>=0?r[timeIdx]||"": "")}`
+        }));
+        lines = pending.map((o) => `#${o.order_id} Клиент · ${o.delivery_exact_time || "?"}`);
+        keyboard = pending.map((o) => [
+          { text: `Выдача ${o.order_id}`, callback_data: encodeCb(`courier_issue:${o.order_id}`) },
+          { text: `Не выдано ${o.order_id}`, callback_data: encodeCb(`courier_not_issued:${o.order_id}`) }
+        ]);
+      } catch (e) {
+        try { logger.warn("courier sheets fallback error", { error: String(e) }); } catch {}
+      }
+    }
     keyboard.push([{ text: "🏠 Главное меню", callback_data: encodeCb("back:main") }]);
     await bot.sendMessage(chatId, lines.join("\n") || "Нет заказов", { reply_markup: { inline_keyboard: keyboard } });
   });
