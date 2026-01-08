@@ -8,7 +8,7 @@ import fs from "fs";
 import { getDb } from "../../infra/db/sqlite";
 import { ReportService } from "../../services/ReportService";
 import { getDefaultCity } from "../../infra/backend";
-import { sendDailySummary } from "../../infra/cron/scheduler";
+import { sendDailySummary, generateDailySummaryText } from "../../infra/cron/scheduler";
 
 function isAdmin(id: number) {
   const list = (env.TELEGRAM_ADMIN_IDS || "").split(",").map((s) => Number(s.trim())).filter((x) => x);
@@ -42,7 +42,8 @@ export function registerAdminFlow(bot: TelegramBot) {
     }
     try {
       await bot.sendMessage(ctx.chat.id, '⏳ Генерирую тестовую сводку...');
-      await sendDailySummary();
+      const text = await generateDailySummaryText();
+      await bot.sendMessage(ctx.chat.id, text);
       await bot.sendMessage(ctx.chat.id, '✅ Сводка отправлена');
     } catch (error: any) {
       console.error('[TEST SUMMARY ERROR]:', error);
@@ -210,24 +211,9 @@ export function registerAdminFlow(bot: TelegramBot) {
       }
   } else if (finalData === "admin_report_today") {
       try {
-        const city = shopConfig.cityCode || getDefaultCity();
-        const rs = new ReportService();
-        const report = await rs.getTodayReport(city);
-        let message = `📊 <b>Отчёт за сегодня (${report.date})</b>\n\n`;
-        message += `🏪 Магазин: ${shopConfig.shopName}\n`;
-        message += `🏙 Город: ${city}\n`;
-        message += `📦 Заказов: ${report.orders}\n`;
-        message += `💰 Выручка: ${report.revenue.toFixed(2)}€\n`;
-        message += `💵 Доля (5%): ${report.yourShare.toFixed(2)}€\n`;
-        message += `🔥 Топ товар: ${report.topItem}\n\n`;
-        if (report.orders > 0) {
-          message += `<b>Продано товаров:</b>\n`;
-          for (const [name, count] of Object.entries(report.itemsSold || {})) {
-            message += `• ${name}: ${count} шт\n`;
-          }
-        }
+        const text = await generateDailySummaryText();
         const kb = [[{ text: "⬅️ Назад", callback_data: "admin_back" }]];
-        await bot.sendMessage(chatId, message, { reply_markup: { inline_keyboard: kb }, parse_mode: "HTML" });
+        await bot.sendMessage(chatId, text, { reply_markup: { inline_keyboard: kb } });
       } catch (error) {
         await bot.sendMessage(chatId, "❌ Ошибка загрузки отчёта");
       }
