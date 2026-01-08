@@ -32,6 +32,8 @@ function stringHash(s: string) {
 export class GoogleSheetsBackend implements DataBackend {
   private cacheProducts: Map<string, { ts: number; data: Product[] }> = new Map();
   private cacheCouriers: Map<string, { ts: number; data: Courier[] }> = new Map();
+  private productsLoaded = false;
+  private couriersLoaded = false;
 
   async getProducts(city: string): Promise<Product[]> {
     const cached = this.cacheProducts.get(city);
@@ -105,6 +107,148 @@ export class GoogleSheetsBackend implements DataBackend {
     return out;
   }
 
+  async preloadData(): Promise<void> {
+    const city = getDefaultCity();
+    try {
+      await Promise.all([this.getProducts(city), this.getActiveCouriers(city)]);
+      this.productsLoaded = true;
+      this.couriersLoaded = true;
+    } catch (err) {
+      // ignore, will lazy-load later
+    }
+  }
+
+  async invalidateCache(type: "products" | "couriers" | "all") {
+    if (type === "products" || type === "all") {
+      this.cacheProducts.clear();
+    }
+    if (type === "couriers" || type === "all") {
+      this.cacheCouriers.clear();
+    }
+  }
+
+  async init(): Promise<void> {
+    await this.preloadData();
+    await this.syncAllProducts();
+  }
+
+  async syncAllProducts(): Promise<void> {
+    const cities = (env.CITY_CODES || "FFM").split(",").map((s) => s.trim()).filter((s) => s.length);
+    for (const city of cities) {
+      try {
+        await this.syncCityProducts(city);
+      } catch (e) {
+        // ignore individual city failures
+      }
+    }
+  }
+
+  async syncCityProducts(city: string): Promise<void> {
+    const s = sheetName("products", city);
+    let vr = await batchGet([`${s}!A:Z`]);
+    let values = vr[0]?.values || [];
+    if (!values.length) {
+      const up = s.replace(/^[a-z]/, (c) => c.toUpperCase());
+      vr = await batchGet([`${up}!A:Z`]);
+      values = vr[0]?.values || [];
+    }
+    if (!values.length) return;
+    const headers = values[0] || [];
+    const rows = values.slice(1);
+    const stockIdx = idx(headers as string[], ["stock", "qty_available"]);
+    const activeIdx = idx(headers as string[], ["active", "is_active"]);
+    if (stockIdx < 0 || activeIdx < 0) return;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const stock = Number(r[stockIdx] || 0);
+      const isActive = String(r[activeIdx] || "").toLowerCase();
+      const targetActive = stock > 0 ? "true" : "false";
+      if ((stock === 0 && isActive !== "false") || (stock > 0 && isActive !== "true")) {
+        const letter = String.fromCharCode(65 + activeIdx);
+        await update(`${s}!${letter}${i + 2}`, [[targetActive]]);
+      }
+    }
+  }
+
+  async getLastOrderId(city?: string): Promise<number> {
+    const c = (city || getDefaultCity()).trim();
+    const s = sheetName("orders", c);
+    const vr = await batchGet([`${s}!A:Z`]);
+    const values = vr[0]?.values || [];
+    if (values.length <= 1) return 0;
+    const headers = values[0] || [];
+    const rows = values.slice(1);
+    const orderIdx = headers.indexOf("order_id");
+    if (orderIdx < 0) return 0;
+    let maxId = 0;
+    for (const r of rows) {
+      const oid = Number(r[orderIdx] || 0);
+      if (oid > maxId) maxId = oid;
+    }
+    return maxId;
+  }
+
+  async updateStockAfterOrder(items: Array<{ product_id: number; qty: number }>, city?: string): Promise<void> {
+    const c = (city || getDefaultCity()).trim();
+    const s = sheetName("products", c);
+    const vr = await batchGet([`${s}!A:Z`]);
+    const values = vr[0]?.values || [];
+    if (!values.length) return;
+    const headers = values[0] || [];
+    const rows = values.slice(1);
+    const stockIdx = idx(headers as string[], ["stock", "qty_available"]);
+    const activeIdx = idx(headers as string[], ["active", "is_active"]);
+    const skuIdx = idx(headers as string[], ["sku"]);
+    function pidForRow(r: any[], i: number) {
+      if (skuIdx >= 0 && r[skuIdx]) return stringHash(String(r[skuIdx]));
+      return i + 1;
+    }
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const pid = pidForRow(r, i);
+      const match = items.find((it) => Number(it.product_id) === Number(pid));
+      if (!match) continue;
+      const cur = Number(r[stockIdx] || 0);
+      const next = Math.max(0, cur - Number(match.qty || 0));
+      const stockLetter = String.fromCharCode(65 + stockIdx);
+      await update(`${s}!${stockLetter}${i + 2}`, [[String(next)]]);
+      if (activeIdx >= 0 && next === 0) {
+        const activeLetter = String.fromCharCode(65 + activeIdx);
+        await update(`${s}!${activeLetter}${i + 2}`, [["false"]]);
+      }
+    }
+  }
+
+  async createOrder(order: {
+    order_id: number;
+    user_tg_id: number;
+    status: string;
+    total_amount: number;
+    courier_id?: number | null;
+    delivery_date?: string | null;
+    delivery_time?: string | null;
+    payment_method?: string | null;
+    items: Array<{ product_id: number; qty: number; price: number }>;
+    city?: string;
+  }): Promise<void> {
+    const c = (order.city || getDefaultCity()).trim();
+    const s = sheetName("orders", c);
+    await append(`${s}!A:L`, [[
+      String(order.order_id),
+      String(order.user_tg_id),
+      String(order.status || "pending"),
+      Number(order.total_amount || 0).toFixed(2),
+      String(order.courier_id || ""),
+      String(order.delivery_date || ""),
+      String(order.delivery_time || ""),
+      String(order.payment_method || ""),
+      new Date().toISOString(),
+      "",
+      JSON.stringify(order.items || []),
+      c
+    ]]);
+    await this.updateStockAfterOrder(order.items, c);
+  }
   async appendOrder(order: any): Promise<void> {
     const s = sheetName("orders", order.city || getDefaultCity());
     const row = [
@@ -122,6 +266,34 @@ export class GoogleSheetsBackend implements DataBackend {
       String(order.city || getDefaultCity())       // L: city
     ];
     await append(`${s}!A:L`, [row]);
+  }
+
+  async updateOrderDetails(orderId: number, details: { courier_id?: number; slot_time?: string; payment_method?: string; delivery_date?: string }): Promise<void> {
+    const s = sheetName("orders", getDefaultCity());
+    const vr = await batchGet([`${s}!A:Z`]);
+    const values = vr[0]?.values || [];
+    const headers = values[0] || [];
+    const rows = values.slice(1);
+    const idx = (name: string) => headers.indexOf(name);
+    const orderIdx = idx("order_id");
+    if (orderIdx < 0) return;
+    let targetRow = -1;
+    for (let i = 0; i < rows.length; i++) {
+      if (String(rows[i][orderIdx]) === String(orderId)) { targetRow = i + 1; break; }
+    }
+    if (targetRow < 0) return;
+    const setIfExists = async (name: string, val?: string | number) => {
+      const ci = idx(name);
+      if (ci >= 0 && val != null) {
+        const letter = String.fromCharCode(65 + ci);
+        await update(`${s}!${letter}${targetRow + 1}`, [[String(val)]]);
+      }
+    };
+    await setIfExists("courier_id", details.courier_id);
+    await setIfExists("delivery_date", details.delivery_date);
+    await setIfExists("slot_time", details.slot_time);
+    await setIfExists("delivery_time", details.slot_time);
+    await setIfExists("payment_method", details.payment_method);
   }
 
   async commitDelivery(orderId: number): Promise<void> {

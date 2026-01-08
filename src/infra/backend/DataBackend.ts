@@ -20,4 +20,5 @@ export interface DataBackend {
   }): Promise<void>;
   commitDelivery(orderId: number): Promise<void>;
   upsertDailyMetrics(date: string, city: string, metrics: MetricsRow): Promise<void>;
+  updateOrderDetails?(orderId: number, details: { courier_id?: number; slot_time?: string; payment_method?: string; delivery_date?: string }): Promise<void>;
 }
